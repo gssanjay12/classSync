@@ -1,7 +1,8 @@
+import time
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import func
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from urllib.parse import quote
 from typing import List, Optional, Dict, Any
 from app.database import get_db
@@ -505,8 +506,17 @@ def send_poll_reminders(
     if poll.status != PollStatus.ACTIVE or now > deadline:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot send reminders for closed or expired polls.")
 
-    # Get all enrolled students who haven't responded
+    # Responded student IDs for this poll
     responded_ids = [r.student_id for r in db.query(Response.student_id).filter(Response.poll_id == poll.id).all()]
+
+    # If specific students were requested, check if all have already responded
+    if req.student_ids:
+        already_responded = [sid for sid in req.student_ids if sid in responded_ids]
+        if len(req.student_ids) == len(already_responded):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Selected student(s) have already responded to this poll."
+            )
 
     target_query = db.query(User, StudentProfile).join(
         ClassMember, ClassMember.student_id == User.id
@@ -525,11 +535,14 @@ def send_poll_reminders(
         target_query = target_query.filter(User.id.in_(req.student_ids))
 
     targets = target_query.all()
+    whatsapp_is_configured = WhatsAppService.is_configured()
+
     if not targets:
         return PollRemindResponse(
             total_targeted=0,
             sent_count=0,
             failed_count=0,
+            whatsapp_configured=whatsapp_is_configured,
             results=[]
         )
 
@@ -540,46 +553,96 @@ def send_poll_reminders(
     sent_count = 0
     failed_count = 0
 
-    for user, profile in targets:
+    cooldown_cutoff = now - timedelta(minutes=settings.WHATSAPP_DUPLICATE_INTERVAL_MINUTES)
+
+    for index, (user, profile) in enumerate(targets):
         raw_phone = profile.phone_number if profile else None
+        reg_no = profile.register_number if profile else None
+
+        # Bulk safety: prevent accidental duplicate reminders within cooldown period
+        recent_log = db.query(MessageLog).filter(
+            MessageLog.poll_id == poll.id,
+            MessageLog.student_id == user.id,
+            MessageLog.sent_at >= cooldown_cutoff,
+            MessageLog.delivery_status.in_(["SENT", "DELIVERED", "READ"])
+        ).first()
+
+        if recent_log:
+            failed_count += 1
+            results.append(MessageLogDetail(
+                id=recent_log.id,
+                poll_id=poll.id,
+                student_id=user.id,
+                student_name=user.name,
+                student_register_number=reg_no,
+                recipient_phone=recent_log.recipient_phone,
+                message_type="POLL_REMINDER",
+                provider="WHATSAPP_CLOUD_API",
+                provider_message_id=recent_log.provider_message_id,
+                delivery_status="FAILED",
+                error_message=f"Reminder recently sent ({settings.WHATSAPP_DUPLICATE_INTERVAL_MINUTES}m cooldown)",
+                sent_at=recent_log.sent_at
+            ))
+            continue
+
+        # Rate-limiting controlled pacing between dispatches
+        if index > 0:
+            time.sleep(0.05)
+
         send_res = WhatsAppService.send_poll_reminder(
             db=db,
             student_id=user.id,
             poll_id=poll.id,
             sent_by_id=current_user.id,
             student_name=user.name,
-            recipient_phone=raw_phone or "",
+            recipient_phone=raw_phone,
             poll_question=poll.question,
             deadline_str=deadline_str,
             poll_link=poll_link,
             custom_message=req.custom_message
         )
+
         if send_res["success"]:
             sent_count += 1
         else:
             failed_count += 1
 
         results.append(MessageLogDetail(
-            id=0,
+            id=send_res.get("log_id", 0),
             poll_id=poll.id,
             student_id=user.id,
             student_name=user.name,
-            recipient_phone=raw_phone or "N/A",
+            student_register_number=reg_no,
+            recipient_phone=raw_phone or "NOT_AVAILABLE",
             message_type="POLL_REMINDER",
             provider="WHATSAPP_CLOUD_API",
             provider_message_id=send_res.get("message_id"),
-            delivery_status=send_res.get("status", "SENT"),
+            delivery_status=send_res.get("status", "FAILED"),
             error_message=send_res.get("error"),
             sent_at=now
         ))
 
     client_ip = request.client.host if request.client else None
-    record_audit_log(db, action="SEND_WHATSAPP_REMINDERS", target_type="POLL", actor_user_id=current_user.id, target_id=str(poll.id), metadata={"targeted": len(targets), "sent": sent_count, "failed": failed_count}, ip_address=client_ip)
+    record_audit_log(
+        db,
+        action="SEND_WHATSAPP_REMINDERS",
+        target_type="POLL",
+        actor_user_id=current_user.id,
+        target_id=str(poll.id),
+        metadata={
+            "targeted": len(targets),
+            "sent": sent_count,
+            "failed": failed_count,
+            "whatsapp_configured": whatsapp_is_configured
+        },
+        ip_address=client_ip
+    )
 
     return PollRemindResponse(
         total_targeted=len(targets),
         sent_count=sent_count,
         failed_count=failed_count,
+        whatsapp_configured=whatsapp_is_configured,
         results=results
     )
 
@@ -595,8 +658,10 @@ def get_poll_messages(
 
     check_teacher_or_rep_for_class(poll.class_id, current_user, db)
 
-    logs = db.query(MessageLog, User).join(
+    logs = db.query(MessageLog, User, StudentProfile).join(
         User, MessageLog.student_id == User.id
+    ).outerjoin(
+        StudentProfile, StudentProfile.user_id == User.id
     ).filter(
         MessageLog.poll_id == id
     ).order_by(MessageLog.sent_at.desc()).all()
@@ -607,6 +672,7 @@ def get_poll_messages(
             poll_id=log.poll_id,
             student_id=log.student_id,
             student_name=user.name,
+            student_register_number=profile.register_number if profile else None,
             recipient_phone=log.recipient_phone,
             message_type=log.message_type,
             provider=log.provider,
@@ -614,5 +680,5 @@ def get_poll_messages(
             delivery_status=log.delivery_status,
             error_message=log.error_message,
             sent_at=log.sent_at
-        ) for log, user in logs
+        ) for log, user, profile in logs
     ]

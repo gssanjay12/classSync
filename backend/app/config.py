@@ -18,11 +18,18 @@ class Settings(BaseSettings):
     EMAIL_PASSWORD: Optional[str] = None
     EMAIL_FROM: str = "noreply@classpoll.app"
 
-    # Official WhatsApp Cloud / Business API
-    WHATSAPP_API_URL: str = "https://graph.facebook.com/v20.0"
+    # Official WhatsApp Cloud / Business Platform API
+    WHATSAPP_ENABLED: bool = False
+    WHATSAPP_API_URL: str = "https://graph.facebook.com"
+    WHATSAPP_API_VERSION: str = "v20.0"
     WHATSAPP_PHONE_NUMBER_ID: Optional[str] = None
     WHATSAPP_ACCESS_TOKEN: Optional[str] = None
+    WHATSAPP_BUSINESS_ACCOUNT_ID: Optional[str] = None
     WHATSAPP_TEMPLATE_NAME: str = "classpoll_reminder"
+    WHATSAPP_TEMPLATE_LANG: str = "en"
+    WHATSAPP_USE_TEMPLATE: bool = True
+    WHATSAPP_WEBHOOK_VERIFY_TOKEN: str = "classpoll_verify_token_secure_987654"
+    WHATSAPP_DUPLICATE_INTERVAL_MINUTES: int = 5
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

@@ -103,6 +103,7 @@ export interface MessageLogItem {
   poll_id: number;
   student_id: number;
   student_name: string;
+  student_register_number?: string;
   recipient_phone: string;
   message_type: string;
   provider: string;
@@ -116,6 +117,7 @@ export interface ReminderResponse {
   total_targeted: number;
   sent_count: number;
   failed_count: number;
+  whatsapp_configured?: boolean;
   results: MessageLogItem[];
 }
 

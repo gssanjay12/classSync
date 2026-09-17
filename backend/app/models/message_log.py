@@ -20,6 +20,7 @@ class MessageLog(Base):
     delivery_status = Column(String(50), default="SENT", nullable=False) # PENDING, SENT, DELIVERED, FAILED
     error_message = Column(Text, nullable=True)
     sent_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=True)
 
     poll = relationship("Poll")
     student = relationship("User", foreign_keys=[student_id])

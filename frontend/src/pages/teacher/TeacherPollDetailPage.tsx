@@ -94,7 +94,19 @@ export const TeacherPollDetailPage: React.FC = () => {
       setIsRemindModalOpen(false);
       setSelectedStudentIds([]);
       setCustomMessage('');
-      success(`WhatsApp reminders dispatched! Sent: ${resData.sent_count}, Failed: ${resData.failed_count}`);
+
+      if (resData.whatsapp_configured === false) {
+        toastError('WhatsApp integration is not configured. Please set WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_NUMBER_ID in backend.');
+      } else if (resData.sent_count > 0 && resData.failed_count === 0) {
+        success(`Message submitted successfully (${resData.sent_count} reminder${resData.sent_count > 1 ? 's' : ''} dispatched).`);
+      } else if (resData.sent_count > 0 && resData.failed_count > 0) {
+        success(`Dispatched ${resData.sent_count} reminder(s), but ${resData.failed_count} failed. See delivery logs.`);
+      } else if (resData.sent_count === 0 && resData.total_targeted > 0) {
+        const firstErr = resData.results?.[0]?.error_message || 'Message failed to send.';
+        toastError(`Failed to send reminder: ${firstErr}`);
+      } else {
+        success('No pending non-responders targeted.');
+      }
     },
     onError: (err: any) => {
       toastError(err.response?.data?.detail || 'Failed to dispatch WhatsApp reminders.');
@@ -589,17 +601,19 @@ export const TeacherPollDetailPage: React.FC = () => {
                 <thead className="bg-slate-50 text-slate-500 uppercase tracking-wider font-semibold border-b border-slate-100">
                   <tr>
                     <th className="px-6 py-3">Student</th>
+                    <th className="px-6 py-3">Register No</th>
                     <th className="px-6 py-3">Recipient Phone</th>
                     <th className="px-6 py-3">Provider</th>
                     <th className="px-6 py-3">Delivery Status</th>
                     <th className="px-6 py-3">Sent Time</th>
-                    <th className="px-6 py-3">Provider Reference</th>
+                    <th className="px-6 py-3">Reference / Details</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {messageLogs.map((log) => (
                     <tr key={log.id} className="hover:bg-slate-50/60 transition-colors">
                       <td className="px-6 py-3.5 font-semibold text-slate-900">{log.student_name}</td>
+                      <td className="px-6 py-3.5 font-mono text-slate-600">{log.student_register_number || '—'}</td>
                       <td className="px-6 py-3.5 font-mono text-slate-600">{log.recipient_phone}</td>
                       <td className="px-6 py-3.5">
                         <span className="font-mono text-[11px] px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-medium">
@@ -608,11 +622,13 @@ export const TeacherPollDetailPage: React.FC = () => {
                       </td>
                       <td className="px-6 py-3.5">
                         <span
-                          className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                            log.delivery_status === 'SENT' || log.delivery_status === 'DELIVERED'
+                          className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold tracking-wide uppercase ${
+                            log.delivery_status === 'DELIVERED' || log.delivery_status === 'READ'
                               ? 'bg-emerald-100 text-emerald-800'
-                              : log.delivery_status === 'SIMULATED'
-                              ? 'bg-blue-100 text-blue-800'
+                              : log.delivery_status === 'SENT'
+                              ? 'bg-sky-100 text-sky-800'
+                              : log.delivery_status === 'PENDING'
+                              ? 'bg-amber-100 text-amber-800'
                               : 'bg-rose-100 text-rose-800'
                           }`}
                         >
@@ -627,8 +643,22 @@ export const TeacherPollDetailPage: React.FC = () => {
                           minute: '2-digit',
                         })}
                       </td>
-                      <td className="px-6 py-3.5 font-mono text-slate-400 text-[11px] truncate max-w-xs">
-                        {log.provider_message_id || log.error_message || 'OK'}
+                      <td className="px-6 py-3.5 text-[11px] max-w-xs">
+                        {log.delivery_status === 'FAILED' ? (
+                          <span
+                            className="font-sans text-rose-600 font-medium line-clamp-2 block"
+                            title={log.error_message || undefined}
+                          >
+                            {log.error_message || 'Delivery rejected by provider'}
+                          </span>
+                        ) : (
+                          <span
+                            className="font-mono text-slate-500 truncate block max-w-[200px]"
+                            title={log.provider_message_id || 'Submitted'}
+                          >
+                            {log.provider_message_id || 'Submitted to Meta'}
+                          </span>
+                        )}
                       </td>
                     </tr>
                   ))}

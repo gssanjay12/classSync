@@ -25,6 +25,7 @@ class MessageLogDetail(BaseModel):
     poll_id: int
     student_id: int
     student_name: str
+    student_register_number: Optional[str] = None
     recipient_phone: str
     message_type: str
     provider: str
@@ -37,6 +38,7 @@ class PollRemindResponse(BaseModel):
     total_targeted: int
     sent_count: int
     failed_count: int
+    whatsapp_configured: bool = True
     results: List[MessageLogDetail]
 
 class PollParticipantsResponse(BaseModel):

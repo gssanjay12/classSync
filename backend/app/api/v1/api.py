@@ -5,7 +5,8 @@ from app.api.v1.endpoints import (
     classes,
     polls,
     dashboards,
-    students
+    students,
+    webhooks
 )
 
 api_router = APIRouter()
@@ -18,3 +19,4 @@ api_router.include_router(polls.router, prefix="/polls", tags=["Polls"])
 api_router.include_router(polls.router, tags=["Class Polls"])
 api_router.include_router(dashboards.router, prefix="/dashboards", tags=["Dashboards"])
 api_router.include_router(students.router, prefix="/students", tags=["Students"])
+api_router.include_router(webhooks.router, prefix="/webhooks", tags=["Webhooks"])
